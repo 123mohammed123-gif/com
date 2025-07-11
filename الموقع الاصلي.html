@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>تحويلي - أداة تحويل شاملة</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Bootstrap RTL CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <style>
+    body {
+      background: #ffebeb;
+      color: #8b0000;
+      padding: 2rem;
+      min-height: 100vh;
+      transition: background 0.3s, color 0.3s;
+    }
+    .dark-mode {
+      background: #121212 !important;
+      color: #f55 !important;
+    }
+    .btn-toggle {
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      z-index: 9999;
+    }
+    .output-link {
+      font-weight: 600;
+      color: #28a745;
+      word-break: break-all;
+      display: block;
+      margin-top: 10px;
+    }
+    /* شريط التقدم */
+    .progress {
+      height: 25px;
+    }
+    .progress-bar {
+      font-weight: bold;
+      line-height: 25px;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <button class="btn btn-danger btn-toggle" id="toggleTheme">الوضع الداكن</button>
+
+  <div class="container bg-white rounded shadow p-4">
+    <h1 class="text-center mb-4">🔄 تحويلي - أداة تحويل شاملة</h1>
+
+    <div class="mb-3">
+      <label for="conversionSelect" class="form-label">اختر نوع التحويل:</label>
+      <select id="conversionSelect" class="form-select">
+        <option value="compress">📦 ضغط صورة</option>
+        <option value="img2pdf">🖼️ صورة إلى PDF</option>
+        <option value="mergepdf">📑 دمج PDF</option>
+        <option value="html2word">📄 HTML إلى Word</option>
+        <option value="mp4toflv">🎬 فيديو MP4 إلى FLV</option>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label for="fileInput" class="form-label">اختر الملف أو الملفات:</label>
+      <input
+        type="file"
+        id="fileInput"
+        class="form-control"
+        multiple
+        accept=".jpg,.jpeg,.png,.pdf,.html,.htm,.mp4"
+      />
+    </div>
+
+    <div class="mb-3" id="htmlTextAreaContainer" style="display:none;">
+      <label for="htmlInput" class="form-label">أدخل النص أو HTML:</label>
+      <textarea id="htmlInput" class="form-control" rows="5"></textarea>
+    </div>
+
+    <button id="convertBtn" class="btn btn-danger w-100">تنفيذ التحويل</button>
+
+    <div id="output" class="mt-4"></div>
+  </div>
+
+  <!-- مكتبات -->
+  <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+  <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.9/dist/ffmpeg.min.js"></script>
+
+  <script>
+    const toggleThemeBtn = document.getElementById("toggleTheme");
+    const body = document.body;
+    toggleThemeBtn.addEventListener("click", () => {
+      body.classList.toggle("dark-mode");
+      toggleThemeBtn.textContent = body.classList.contains("dark-mode")
+        ? "الوضع المضيء"
+        : "الوضع الداكن";
+    });
+
+    const conversionSelect = document.getElementById("conversionSelect");
+    const htmlTextAreaContainer = document.getElementById("htmlTextAreaContainer");
+    const htmlInput = document.getElementById("htmlInput");
+    const fileInput = document.getElementById("fileInput");
+    const convertBtn = document.getElementById("convertBtn");
+    const outputDiv = document.getElementById("output");
+
+    // ffmpeg.wasm
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
+
+    conversionSelect.addEventListener("change", () => {
+      if (conversionSelect.value === "html2word") {
+        htmlTextAreaContainer.style.display = "block";
+      } else {
+        htmlTextAreaContainer.style.display = "none";
+        htmlInput.value = "";
+      }
+      outputDiv.innerHTML = "";
+      fileInput.value = "";
+      convertBtn.disabled = false;
+      convertBtn.textContent = "تنفيذ التحويل";
+    });
+
+    async function compressImage(file) {
+      const options = { maxSizeMB: 1, maxWidthOrHeight: 1024, useWebWorker: true };
+      return await imageCompression(file, options);
+    }
+
+    async function imageToPDF(file) {
+      const reader = new FileReader();
+      return new Promise((resolve, reject) => {
+        reader.onload = function (e) {
+          const img = new Image();
+          img.src = e.target.result;
+          img.onload = () => {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF();
+            const imgWidth = 180;
+            const imgHeight = (img.height * imgWidth) / img.width;
+            pdf.addImage(img, "JPEG", 10, 10, imgWidth, imgHeight);
+            const pdfBlob = pdf.output("blob");
+            resolve(pdfBlob);
+          };
+          img.onerror = () => reject("فشل تحميل الصورة");
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function mergePDFs(files) {
+      const mergedPdf = await PDFLib.PDFDocument.create();
+      for (const file of files) {
+        const bytes = await file.arrayBuffer();
+        const pdf = await PDFLib.PDFDocument.load(bytes);
+        const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+        copiedPages.forEach((page) => mergedPdf.addPage(page));
+      }
+      const mergedBytes = await mergedPdf.save();
+      return new Blob([mergedBytes], { type: "application/pdf" });
+    }
+
+    function htmlToWord(html) {
+      return htmlDocx.asBlob(html);
+    }
+
+    let selectedFileForVideo;
+
+    fileInput.addEventListener("change", () => {
+      if (conversionSelect.value === "mp4toflv" && fileInput.files.length > 0) {
+        selectedFileForVideo = fileInput.files[0];
+      } else {
+        selectedFileForVideo = null;
+      }
+    });
+
+    convertBtn.addEventListener("click", async () => {
+      outputDiv.innerHTML = "";
+      const tool = conversionSelect.value;
+      const files = fileInput.files;
+
+      try {
+        if (tool === "compress") {
+          if (!files[0]) return alert("يرجى اختيار صورة.");
+          const compressed = await compressImage(files[0]);
+          const url = URL.createObjectURL(compressed);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "compressed.jpg";
+          link.textContent = "📥 تحميل الصورة المضغوطة";
+          link.className = "output-link";
+          outputDiv.appendChild(link);
+
+        } else if (tool === "img2pdf") {
+          if (!files[0]) return alert("يرجى اختيار صورة.");
+          const pdfBlob = await imageToPDF(files[0]);
+          const url = URL.createObjectURL(pdfBlob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "converted.pdf";
+          link.textContent = "📥 تحميل PDF من الصورة";
+          link.className = "output-link";
+          outputDiv.appendChild(link);
+
+        } else if (tool === "mergepdf") {
+          if (!files.length) return alert("يرجى اختيار ملفات PDF.");
+          const pdfBlob = await mergePDFs(files);
+          const url = URL.createObjectURL(pdfBlob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "merged.pdf";
+          link.textContent = "📥 تحميل PDF المدمج";
+          link.className = "output-link";
+          outputDiv.appendChild(link);
+
+        } else if (tool === "html2word") {
+          const html = htmlInput.value.trim();
+          if (!html) return alert("يرجى إدخال النص أو HTML.");
+          const wordBlob = htmlToWord(html);
+          const url = URL.createObjectURL(wordBlob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "document.docx";
+          link.textContent = "📥 تحميل ملف Word";
+          link.className = "output-link";
+          outputDiv.appendChild(link);
+
+        } else if (tool === "mp4toflv") {
+          if (!selectedFileForVideo) return alert("يرجى اختيار ملف فيديو MP4.");
+          convertBtn.disabled = true;
+          convertBtn.textContent = "⏳ جاري تحميل ffmpeg... يرجى الانتظار";
+          outputDiv.innerHTML = '';
+
+          // إنشاء شريط التقدم
+          const progressBar = document.createElement('div');
+          progressBar.className = 'progress mt-3';
+          progressBar.innerHTML = `
+            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+          `;
+          outputDiv.appendChild(progressBar);
+          const progressBarInner = progressBar.querySelector('.progress-bar');
+
+          if (!ffmpeg.isLoaded()) {
+            await ffmpeg.load();
+          }
+
+          convertBtn.textContent = "⏳ جاري معالجة الفيديو...";
+
+          // تعقب التقدم
+          ffmpeg.setProgress(({ ratio }) => {
+            let percent = Math.min(100, Math.floor(ratio * 100));
+            progressBarInner.style.width = percent + '%';
+            progressBarInner.textContent = percent + '%';
+          });
+
+          try {
+            try { ffmpeg.FS("unlink", "input.mp4"); } catch {}
+            try { ffmpeg.FS("unlink", "output.flv"); } catch {}
+
+            ffmpeg.FS("writeFile", "input.mp4", await fetchFile(selectedFileForVideo));
+
+            await ffmpeg.run("-i", "input.mp4", "-c:v", "flv", "output.flv");
+
+            ffmpeg.setProgress(() => {});
+
+            const data = ffmpeg.FS("readFile", "output.flv");
+
+            const videoBlob = new Blob([data.buffer], { type: "video/x-flv" });
+            const url = URL.createObjectURL(videoBlob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "converted.flv";
+            link.textContent = "⬇️ تحميل ملف FLV";
+            link.className = "output-link";
+            outputDiv.appendChild(link);
+
+          } catch (err) {
+            alert("حدث خطأ أثناء تحويل الفيديو: " + err.message);
+          } finally {
+            convertBtn.disabled = false;
+            convertBtn.textContent = "تنفيذ التحويل";
+          }
+        }
+      } catch (error) {
+        alert("حدث خطأ: " + error.message || error);
+        convertBtn.disabled = false;
+        convertBtn.textContent = "تنفيذ التحويل";
+      }
+    });
+  </script>
+</body>
+</html>
